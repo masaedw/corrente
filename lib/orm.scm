@@ -7,26 +7,26 @@
 ;;
 
 (define-module orm
+  (use dbi)
+  (use gauche.collection)
+  (use gauche.parameter)
   (export *db-name*
           *db*
           define-orm-class
           <orm>
           all
           find
-          first-element
           save))
 (select-module orm)
-
-(use dbi)
-(use gauche.collection)
-(use gauche.parameter)
 
 (define *db-name* (make-parameter #f))
 (define *db* (make-parameter #f))
 
-(define-macro (define-orm-class class-name)
-  `(begin (define-class ,class-name (<orm>) ())
-	  (init ,class-name)))
+(define-syntax define-orm-class
+  (syntax-rules ()
+    ((_ class-name)
+     (begin (define-class class-name (<orm>) ())
+            (setup-slots class-name)))))
 
 (define-class <orm-meta> (<class>) ())
 

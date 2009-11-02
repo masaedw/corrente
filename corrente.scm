@@ -4,12 +4,13 @@
 (add-load-path "lib")
 (use orm)
 
-(define-class <user> (<orm>) ())
-(define-class <rate> (<orm>) ())
-(define-class <record> (<orm>) ())
-(define-class <item> (<orm>) ())
-
 (*db-name* "dbi:sqlite3:corrente.db")
+
+(define-orm-class <user>)
+(define-orm-class <rate>)
+(define-orm-class <record>)
+(define-orm-class <item>)
+
 
 (define (main args)
   0)
