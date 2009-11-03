@@ -59,11 +59,13 @@
 	  (interaction-environment))))
 
 (define-method make-with-db-values ((class <orm-meta>) row column-getter)
-  (let1 init-values (fold (lambda(c r)
-			    (list* (make-keyword c) (column-getter row c) r))
-			  ()
-			  (class-slot-ref class 'column-names))
-    (apply make (cons class init-values))))
+  (if (not row)
+    #f
+    (let1 init-values (fold (lambda(c r)
+                              (list* (make-keyword c) (column-getter row c) r))
+                            ()
+                            (class-slot-ref class 'column-names))
+      (apply make (cons class init-values)))))
 
 (define-method all ((class <orm-meta>))
   (let* ((class (setup-slots class))
@@ -133,11 +135,11 @@
 (define (db-update table-name slot-hash key-column key-value)
   (let* ((assign (string-join (map (lambda(c) #`",c = ?") (hash-table-keys slot-hash)) ","))
 	 (sql #`"UPDATE ,table-name SET ,assign WHERE ,key-column = ?"))
-    (apply dbi-execute (*db*) sql (append (hash-table-values slot-hash) (list key-value)))))
+    (apply dbi-execute (*db*) sql '() (append (hash-table-values slot-hash) (list key-value)))))
 
 (define (db-insert table-name slot-hash)
   (let* ((places (map (lambda(c) "?") (hash-table-keys slot-hash)))
 	 (sql #`"INSERT INTO ,table-name (,(string-join (hash-table-keys slot-hash) \",\")) VALUES (,(string-join places \",\"))"))
-    (apply dbi-do (*db*) query (hash-table-values slot-hash))))
+    (apply dbi-do (*db*) sql '() (hash-table-values slot-hash))))
 
 (provide "orm")

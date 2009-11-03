@@ -10,6 +10,7 @@
 (use sxml.sxpath)
 (use file.util)
 (use util.list)
+(use util.match)
 
 (add-load-path "lib")
 (use orm)
@@ -54,11 +55,11 @@
                           "/statuses/mentions.xml")
                         #f :authorization (twitter-auth-token config))
     (sort-by (map (lambda (s)
-                    (map (cut <> s) `(,(if-car-sxpath '(created_at *text*))
-                                      ,(if-car-sxpath '(id *text*))
+                    (map (cut <> s) `(,(if-car-sxpath '(id *text*))
                                       ,(if-car-sxpath '(text *text*))
                                       ,(if-car-sxpath '(user screen_name *text*))
-                                      ,(if-car-sxpath '(user id *text*)))))
+                                      ,(if-car-sxpath '(user id *text*))
+                                      ,(if-car-sxpath '(created_at *text*)))))
                   ((sxpath '(// status)) r))
              (.$ x->integer car)
              >)))
@@ -83,13 +84,32 @@
 (define-class <item> (<orm>) ())
 
 
-(define (kick-reply-watcher! client config)
+;;
+;; Integration
+;;
+
+(define (twitter-main config mention)
+  (match-let1 (id text screen-name twitter-id created-at) mention
+    (let1 user (find <user> :conditions `("twitter_id = ?" ,twitter-id))
+      (if (not user)
+        (let1 newuser #?=(make <user> :twitter_id twitter-id :screen_name screen-name)
+          (save newuser)
+          (twitter-post config #`"@,|screen-name| Piacere!"))
+        (twitter-post config #`"@,|screen-name| Chiao!")))
+  ))
+
+(define (kick-reply-watcher! config)
   (define (body)
     (guard (e [else (log-format "watcher error: ~a" (ref e'message))])
       (let loop ((since-id (max-status-id (twitter-mentions config #f))))
         (sys-sleep 60)
         (log-format "watcher polling")
-        (loop (forward-from-twitter config client since-id))))
+        (let1 mentions (twitter-mentions config since-id)
+          (if (null? mentions)
+            (loop since-id)
+            (begin
+              (for-each (cut twitter-main config <>) mentions)
+              (loop (max-status-id mentions)))))))
     (sys-sleep 60)
     (body))
   (thread-start! (make-thread body)))
