@@ -1,7 +1,8 @@
 -- ユーザ
 create table users (
 id integer primary key,
-twitter_id text
+twitter_id text,
+screen_name text
 );
 
 -- 例文

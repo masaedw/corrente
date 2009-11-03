@@ -10,23 +10,18 @@
   (use dbi)
   (use gauche.collection)
   (use gauche.parameter)
-  (export *db-name*
-          *db*
-          define-orm-class
-          <orm>
-          all
-          find
-          save))
+  (use util.match)
+  (export-all))
 (select-module orm)
+
+(define (orm-init db-name)
+  (*db-name* db-name)
+  (db-connect)
+  (map (cut setup-slots <>) (class-direct-subclasses <orm>)))
+
 
 (define *db-name* (make-parameter #f))
 (define *db* (make-parameter #f))
-
-(define-syntax define-orm-class
-  (syntax-rules ()
-    ((_ class-name)
-     (begin (define-class class-name (<orm>) ())
-            (setup-slots class-name)))))
 
 (define-class <orm-meta> (<class>) ())
 
@@ -71,18 +66,26 @@
     (apply make (cons class init-values))))
 
 (define-method all ((class <orm-meta>))
-  (set! class (setup-slots class))
-  (let* ((result (db-select (class-slot-ref class 'table-name)))
-	 (column-getter (relation-accessor result)))
+  (let* ((class (setup-slots class))
+         (result (db-select (class-slot-ref class 'table-name)))
+         (column-getter (relation-accessor result)))
     (map (lambda(row) (make-with-db-values class row column-getter))
 	 result)))
 
 (define-method find ((class <orm-meta>) (id <integer>))
-  (set! class (setup-slots class))
-  (let* ((result (db-select-by-key (class-slot-ref class 'table-name)
+  (let* ((class (setup-slots class))
+         (result (db-select-by-key (class-slot-ref class 'table-name)
 				   "id" id))
 	 (column-getter (relation-accessor result)))
     (make-with-db-values class (first-element result) column-getter)))
+
+(define-method find ((class <orm-meta>) . restargs)
+  (let* ((conditions (get-keyword :conditions restargs #f))
+         (class (setup-slots class))
+         (result (db-select-by-condition (class-slot-ref class 'table-name) conditions))
+         (column-getter (relation-accessor result)))
+    (make-with-db-values class (first-element result) column-getter)))
+
 
 (define-method first-element ((coll <collection>))
   (find (lambda(el) #t) coll))
@@ -108,7 +111,8 @@
     hash))
 
 (define (db-connect)
-  (*db* (dbi-connect (*db-name*))))
+  (begin0
+   (*db* (dbi-connect (*db-name*)))))
 
 (define (db-column-name-list table-name)
   (let1 result (dbi-do (*db*) #`"SELECT * FROM ,table-name LIMIT 1")
@@ -119,18 +123,21 @@
 
 (define (db-select-by-key table-name key-column key-value)
   (let1 sql #`"SELECT * FROM ,table-name WHERE ,key-column = ?"
-    (dbi-do (*db*) sql key-value)))
+    (dbi-do (*db*) sql '() key-value)))
+
+(define (db-select-by-condition table-name conditions)
+  (match-let1 (condition restargs ...) conditions
+    (let1 sql #`"SELECT * FROM ,table-name WHERE ,condition"
+      (apply dbi-do (*db*) sql '() restargs))))
 
 (define (db-update table-name slot-hash key-column key-value)
   (let* ((assign (string-join (map (lambda(c) #`",c = ?") (hash-table-keys slot-hash)) ","))
-	 (sql #`"UPDATE ,table-name SET ,assign WHERE ,key-column = ?")
-	 (query (dbi-prepare (*db*) sql)))
-    (apply dbi-execute (cons query (append (hash-table-values slot-hash) (list key-value))))))
-	 
+	 (sql #`"UPDATE ,table-name SET ,assign WHERE ,key-column = ?"))
+    (apply dbi-execute (*db*) sql (append (hash-table-values slot-hash) (list key-value)))))
+
 (define (db-insert table-name slot-hash)
   (let* ((places (map (lambda(c) "?") (hash-table-keys slot-hash)))
-	 (sql #`"INSERT INTO ,table-name (,(string-join (hash-table-keys slot-hash) \",\")) VALUES (,(string-join places \",\"))")
-	 (query (dbi-prepare (*db*) sql)))
-    (apply dbi-execute (cons query (hash-table-values slot-hash)))))
+	 (sql #`"INSERT INTO ,table-name (,(string-join (hash-table-keys slot-hash) \",\")) VALUES (,(string-join places \",\"))"))
+    (apply dbi-do (*db*) query (hash-table-values slot-hash))))
 
 (provide "orm")
