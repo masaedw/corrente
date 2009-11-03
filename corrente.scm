@@ -2,8 +2,9 @@
 ;; -*- coding: utf-8 mode: scheme -*-
 
 (use gauche.logger)
-
+(use gauche.threads)
 (use gauche.parameter)
+(use math.mt-random)
 (use rfc.http)
 (use rfc.base64)
 (use sxml.ssax)
@@ -40,15 +41,17 @@
   (let1 u:p #`",(config 'twitter-username):,(config 'twitter-password)"
     #`"Basic ,(base64-encode-string u:p)"))
 
-(define (twitter-post config content)
-  (log-format "twitter-post: ~a" content)
-  (let1 r (make-request 'post "twitter.com" "/statuses/update.xml"
-                        (http-compose-query #f `((status ,content)) 'utf-8)
-                        :content-type "application/x-www-form-urlencoded"
-                        :authorization (twitter-auth-token config))
-    ((if-car-sxpath '(// status id *text*)) r)))
+(define (twitter-post config content . restargs)
+  (let* ((in-reply-to-status-id (get-keyword :in-reply-to restargs #f))
+         (option-query (if in-reply-to-status-id `((in_reply_to_status_id ,in-reply-to-status-id)) '())))
+    (log-format "twitter-post: ~a" content)
+    (let1 r (make-request 'post "twitter.com" "/statuses/update.xml"
+                          (http-compose-query #f `((status ,content) . ,option-query) 'utf-8)
+                          :content-type "application/x-www-form-urlencoded"
+                          :authorization (twitter-auth-token config))
+      ((if-car-sxpath '(// status id *text*)) r))))
 
-(define (twitter-mentions config since-id)
+(define (twitter-mentions config since-id . restargs)
   (let1 r (make-request 'get "twitter.com"
                         (if since-id
                           `("/statuses/mentions.xml" (since_id ,since-id))
@@ -88,14 +91,18 @@
 ;; Integration
 ;;
 
+(define m (make <mersenne-twister> :seed (sys-time)))
+(define messages '("Chiao!" "Buon giorno!" "Hi!" "hoge" "Chiao chiao!"))
+
 (define (twitter-main config mention)
   (match-let1 (id text screen-name twitter-id created-at) mention
     (let1 user (find <user> :conditions `("twitter_id = ?" ,twitter-id))
       (if (not user)
-        (let1 newuser #?=(make <user> :twitter_id twitter-id :screen_name screen-name)
+        (let1 newuser (make <user> :twitter_id twitter-id :screen_name screen-name)
           (save newuser)
-          (twitter-post config #`"@,|screen-name| Piacere!"))
-        (twitter-post config #`"@,|screen-name| Chiao!")))
+          (twitter-post config #`"@,|screen-name| Piacere!" :in-reply-to id))
+        (let1 message (ref messages (mt-random-integer m (length messages)))
+          (twitter-post config #`"@,|screen-name| ,message" :in-reply-to id))))
   ))
 
 (define (kick-reply-watcher! config)
@@ -114,14 +121,13 @@
     (body))
   (thread-start! (make-thread body)))
 
-
-
 (define conf (read-configuration "config.scm"))
 (orm-init (conf 'db-name))
 
 (define (main args)
   (let ((config (read-configuration "config.scm")))
     (parameterize ((*db-name* (config 'db-name)))
+      (kick-reply-watcher! config)
       0)))
 
 ;;
